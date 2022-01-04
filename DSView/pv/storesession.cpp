@@ -66,7 +66,8 @@ StoreSession::StoreSession(SigSession &session) :
 	_units_stored(0),
     _unit_count(0),
     _has_error(false),
-    _canceled(false)
+    _canceled(false),
+    _progress(0)
 {
 }
 
@@ -80,10 +81,10 @@ SigSession& StoreSession::session()
     return _session;
 }
 
-pair<uint64_t, uint64_t> StoreSession::progress() const
+double StoreSession::progress() const
 {
     //lock_guard<mutex> lock(_mutex);
-	return make_pair(_units_stored, _unit_count);
+	return _progress;
 }
 
 const QString& StoreSession::error() const
@@ -200,15 +201,35 @@ bool StoreSession::save_start(QString session_file)
     return false;
 }
 
+void StoreSession::set_progress(double progress) {
+    _progress = progress;
+    progress_updated();
+}
+
+void * StoreSession::zip_progress_cb(zip_t *zip, double progress, void * data) {
+    StoreSession * session = (StoreSession *)data;
+    (void)zip;
+    session->set_progress(progress);
+    return NULL;
+}
+
 void StoreSession::save_proc(shared_ptr<data::Snapshot> snapshot)
 {
 	assert(snapshot);
 
+    struct zip *archive;
     int ret = SR_ERR;
     int num = 0;
     shared_ptr<data::LogicSnapshot> logic_snapshot;
     shared_ptr<data::AnalogSnapshot> analog_snapshot;
     shared_ptr<data::DsoSnapshot> dso_snapshot;
+
+    if (!(archive = zip_open(_file_name.toUtf8().data(), 0, &ret))) {
+        _has_error = true;
+        _error = tr("Failed to create zip file. Please check write permission of this path.");
+        return;
+    }
+    zip_register_progress_callback_with_state(archive, 0.01, (zip_progress_callback)&StoreSession::zip_progress_cb, NULL, this);
 
     if ((logic_snapshot = boost::dynamic_pointer_cast<data::LogicSnapshot>(snapshot))) {
         uint16_t to_save_probes = 0;
@@ -239,22 +260,23 @@ void StoreSession::save_proc(shared_ptr<data::Snapshot> snapshot)
                             memset(buf, sample ? 0xff : 0x0, size);
                         }
                     }
-                    ret = sr_session_append(_file_name.toUtf8().data(), buf, size,
+                    ret = sr_session_append(archive, buf, size,
                                       i, ch_index, ch_type, File_Version);
                     if (ret != SR_OK) {
                         if (!_has_error) {
                             _has_error = true;
                             _error = tr("Failed to create zip file. Please check write permission of this path.");
                         }
-                        progress_updated();
-                        if (_has_error)
+                        
+                        if (_has_error) {
+                            zip_close(archive);
                             QFile::remove(_file_name);
+                        }
                         return;
                     }
                     _units_stored += size;
                     if (need_malloc)
                         free(buf);
-                    progress_updated();
                 }
             }
         }
@@ -285,13 +307,13 @@ void StoreSession::save_proc(shared_ptr<data::Snapshot> snapshot)
                         memcpy(tmp, buf, buf_end-buf);
                         memcpy(tmp+(buf_end-buf), buf_start, buf+size-buf_end);
                     }
-                    ret = sr_session_append(_file_name.toUtf8().data(), tmp, size,
+                    ret = sr_session_append(archive, tmp, size,
                                       i, 0, ch_type, File_Version);
                     buf += (size - _unit_count);
                     if (tmp)
                         free(tmp);
                 } else {
-                    ret = sr_session_append(_file_name.toUtf8().data(), buf, size,
+                    ret = sr_session_append(archive, buf, size,
                                       i, 0, ch_type, File_Version);
                     buf += size;
                 }
@@ -300,20 +322,28 @@ void StoreSession::save_proc(shared_ptr<data::Snapshot> snapshot)
                         _has_error = true;
                         _error = tr("Failed to create zip file. Please check write permission of this path.");
                     }
-                    progress_updated();
-                    if (_has_error)
+                    if (_has_error) {
+                        zip_close(archive);
                         QFile::remove(_file_name);
+                    }
                     return;
                 }
                 _units_stored += size;
-                progress_updated();
             }
         }
     }
-	progress_updated();
 
-    if (_canceled || num == 0)
+    if (_canceled || num == 0) {
+        zip_close(archive);
         QFile::remove(_file_name);
+    } else {
+        if (zip_close(archive) == -1) {
+            _has_error = true;
+            _error = tr("Failed to write zip file.");
+            QFile::remove(_file_name);
+        }
+    }
+    set_progress(1.0);
 }
 
 QString StoreSession::meta_gen(boost::shared_ptr<data::Snapshot> snapshot)

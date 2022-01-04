@@ -579,7 +579,7 @@ SR_API int sr_session_save_init(const char *filename, const char *metafile, cons
  * The session file must have been created with sr_session_save_init()
  * or sr_session_save() beforehand.
  *
- * @param filename The name of the filename to append to. Must not be NULL.
+ * @param archive Pointer to the already opened zip archive.
  * @param buf The data to be appended.
  * @param size Buffer size.
  * @param chunk_num chunk number
@@ -592,20 +592,16 @@ SR_API int sr_session_save_init(const char *filename, const char *metafile, cons
  *
  * @since 0.3.0
  */
-SR_API int sr_session_append(const char *filename, const unsigned char *buf,
+SR_API int sr_session_append(struct zip* archive, const unsigned char *buf,
         uint64_t size, int chunk_num, int index, int type, int version)
 {
-    struct zip *archive;
     struct zip_source *logicsrc;
-    int ret;
+    zip_int64_t idx;
     char chunk_name[16], *type_name;
 
 //    if ((ret = sr_sessionfile_check(filename)) != SR_OK)
 //        return ret;
     if (buf == NULL)
-        goto err;
-
-    if (!(archive = zip_open(filename, 0, &ret)))
         goto err;
 
     if (version == 2) {
@@ -620,18 +616,15 @@ SR_API int sr_session_append(const char *filename, const unsigned char *buf,
     if (!(logicsrc = zip_source_buffer(archive, buf, size, FALSE))) {
         goto err;
     }
-    if (zip_file_add(archive, chunk_name, logicsrc, ZIP_FL_OVERWRITE) == -1) {
+    if ((idx = zip_file_add(archive, chunk_name, logicsrc, ZIP_FL_OVERWRITE)) == -1) {
         goto err;
     }
-    if ((ret = zip_close(archive)) == -1) {
-        sr_info("error saving session file: %s", zip_strerror(archive));
-        goto err;
-    }
+    zip_set_file_compression(archive, idx, ZIP_CM_STORE, 0);
+
 
     return SR_OK;
 
 err:
-    unlink(filename);
     return SR_ERR;
 }
 

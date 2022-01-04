@@ -118,9 +118,7 @@ void StoreProgress::closeEvent(QCloseEvent* e)
 
 void StoreProgress::on_progress_updated()
 {
-    const std::pair<uint64_t, uint64_t> p = _store_session.progress();
-	assert(p.first <= p.second);
-    int percent = p.first * 1.0 / p.second * 100;
+    int percent = _store_session.progress() * 100;
     _progress.setValue(percent);
 
     const QString err = _store_session.error();
@@ -128,7 +126,7 @@ void StoreProgress::on_progress_updated()
 		show_error();
 	}
 
-    if (p.first == p.second) {
+    if (percent == 100) {
         _done = true;
     }
 }

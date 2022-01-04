@@ -58,7 +58,9 @@ public:
 
     SigSession& session();
 
-	std::pair<uint64_t, uint64_t> progress() const;
+	double progress() const;
+
+    void set_progress(double progress);
 
 	const QString& error() const;
 
@@ -74,6 +76,7 @@ private:
     void save_proc(boost::shared_ptr<pv::data::Snapshot> snapshot);
     QString meta_gen(boost::shared_ptr<data::Snapshot> snapshot);
     void export_proc(boost::shared_ptr<pv::data::Snapshot> snapshot);
+    static void * zip_progress_cb(zip_t *zip, double progress, void * data);
     #ifdef ENABLE_DECODE
     QString decoders_gen();
     #endif
@@ -106,6 +109,7 @@ private:
     bool _has_error;
 	QString _error;
     bool _canceled;
+    double _progress;
 };
 
 } // pv
